@@ -1,0 +1,72 @@
+# ============================================================
+#  ParlayGod — Master Configuration
+#  Edit this file to tune the algorithm without touching code.
+# ============================================================
+
+# --- Stats windows ---
+stats:
+  primary_window: 10       # Last N games used as the main baseline
+  recent_window: 5         # Last N games used for trend and recency weighting
+  min_games_required: 3    # Playoffs: 3 games is enough — small sample flagged by AI layer
+
+# --- Scoring weights (must sum to 1.0) ---
+weights:
+  recent_hit_rate: 0.60    # Weight given to last-5 hit rate
+  primary_hit_rate: 0.40   # Weight given to last-10 hit rate
+
+# --- Edge thresholds ---
+thresholds:
+  min_hit_rate: 0.65       # Plays below this weighted hit rate are dropped before AI
+  min_rule_score: 45       # Rule score floor — updated for 6-factor engine (theoretical max ~98)
+  max_parlay_legs: 6       # Max legs per parlay (3-6 targets higher payouts)
+  min_parlay_legs: 2       # Minimum legs for a valid parlay
+  sgp_min_legs: 2          # Same-game parlay minimum legs
+
+# --- Scoring factor reference (documentation only — weights live in scoring.py) ---
+scoring_factors:
+  hit_rate_max: 60         # Factor 1: weighted hit rate across L5 and L10 windows
+  trend_max: 10            # Factor 2: L5 avg vs L10 avg directional momentum
+  line_value_max: 15       # Factor 3: gap between L10 avg and the book's line
+  consistency_max: 8       # Factor 4: coefficient of variation (low CV = bonus)
+  volume_trend_max: 5      # Factor 5: L3 avg vs prior-2 in L5 (rising volume = bonus)
+  blowout_risk_max: 0      # Factor 6: penalty only — 2+ blowout games in L10 trigger deduction
+
+# --- Stat types to analyse ---
+stat_types:
+  - points
+  - rebounds
+  - assists
+  - threes
+  - steals
+  - pra       # Points + Rebounds + Assists (combo prop)
+  - ar        # Assists + Rebounds (combo prop)
+
+# --- Odds API bookmakers (in preference order) ---
+bookmakers:
+  - draftkings
+  - fanduel
+  - betmgm
+  - caesars
+  - pointsbet
+
+# --- NBA season settings ---
+nba:
+  season: "2025-26"
+  season_type: "Playoffs"          # "Regular Season" or "Playoffs" — set to Playoffs for post-season
+  api_delay_seconds: 0.6          # Pause between NBA API calls — reduced (cache eliminates repeat calls)
+
+# --- AI layer settings ---
+ai:
+  model: "anthropic/claude-sonnet-4-5"  # Today: Sonnet. Tomorrow: swap to anthropic/claude-haiku-4-5
+  max_plays_per_call: 15               # Batch size sent to Claude in one call
+  temperature: 0                        # Deterministic output for reproducibility
+
+# --- Secondary "also look at" threshold ---
+secondary:
+  min_hit_rate: 0.55     # Below primary (0.65) but worth surfacing for manual review
+  min_rule_score: 35     # Below primary (45) but still shows some edge signal
+
+# --- Parlay builder ---
+parlay:
+  target_combined_hit_rate: 0.35   # Lowered slightly to surface 3-6 leg SGP combos
+  prefer_same_game: true           # Prioritise SGP combinations when possible

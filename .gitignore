@@ -1,0 +1,16 @@
+# Environment — contains real API keys, never commit
+.env
+
+# Database — contains personal betting data
+parlaygod.db
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# macOS
+.DS_Store

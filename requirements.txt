@@ -1,0 +1,9 @@
+nba_api==1.11.4
+requests==2.32.3
+anthropic==0.40.0
+python-dotenv==1.0.1
+rich==13.9.4
+click==8.1.8
+rapidfuzz>=3.14.5
+openai>=1.0.0
+PyYAML==6.0.2

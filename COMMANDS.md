@@ -39,6 +39,26 @@ python parlay_god/main.py
 python parlay_god/main.py --mode props
 ```
 
+### Game 7 mode — loads deep series intelligence into the AI layer
+```bash
+python parlay_god/main.py --game7
+```
+
+### Game 7 + manual lines (best for today's OKC vs Spurs)
+```bash
+python parlay_god/main.py --manual --ai --game7
+```
+
+### Game 7 + override model (e.g. test with DeepSeek)
+```bash
+python parlay_god/main.py --game7 --model deepseek/deepseek-chat
+```
+
+### Verify AI layer is working with Game 7 context loaded
+```bash
+python parlay_god/main.py --test-ai --game7
+```
+
 ---
 
 ## Manual Mode — Enter Your Own Lines (e.g. from 747)

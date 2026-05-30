@@ -1,6 +1,7 @@
 import json
 import anthropic
 from openai import OpenAI
+import sys
 
 
 SYSTEM_PROMPT = """You are an elite NBA betting analyst with 15 years of experience. You have deep knowledge of:
@@ -73,13 +74,28 @@ def _call_anthropic(prompt: str, api_key: str, model: str) -> str:
     return message.content[0].text.strip()
 
 
-def evaluate_plays(plays: list[dict], api_key: str, model: str, batch_size: int = 15) -> list[dict]:
+def evaluate_plays(plays: list[dict], api_key: str, model: str, batch_size: int = 15, game7_context: str = None) -> list[dict]:
     """Send scored plays to Claude for contextual reasoning. Returns plays with AI fields added."""
     if not plays:
         return plays
 
     use_openrouter = _is_openrouter_key(api_key)
     effective_model = model
+
+    game7_block = ""
+    if game7_context:
+        game7_block = (
+            "\nGAME 7 INTELLIGENCE — READ THIS BEFORE EVALUATING ANY PLAY:\n"
+            "This is a Game 7. Apply everything below as live series context. It overrides any generic reasoning.\n\n"
+            + game7_context +
+            "\n\nGAME 7 ANALYSIS RULES:\n"
+            "- Weight this intelligence heavily — it is specific, verified, and current.\n"
+            "- Penalise role player props harder than normal (minutes compress in close Game 7s).\n"
+            "- Boost reliability props for elite stars who have Game 7 pedigree.\n"
+            "- Flag any prop involving a confirmed injured or absent player as RED immediately.\n"
+            "- Be especially sceptical of three-point props for role players — pace compresses in Game 7.\n"
+            "- Rebounds for elite big men are the most reliable prop type in this game.\n"
+        )
 
     for batch_start in range(0, len(plays), batch_size):
         batch = plays[batch_start: batch_start + batch_size]
@@ -89,30 +105,25 @@ def evaluate_plays(plays: list[dict], api_key: str, model: str, batch_size: int 
             for i, p in enumerate(batch)
         )
 
-        prompt = f"""Evaluate these NBA player prop plays. Apply your NBA expertise to each one.
-
-For each play, think about:
-1. Is the line a TRAP? (set to attract bets despite poor value)
-2. Is there a GAME SCRIPT concern? (blowout risk, low total, heavy favorite)
-3. Is there a MATCHUP EDGE? (weak defender, high-pace opponent, or elite lock-down defender)
-4. Is the CONSISTENCY reliable or is this a volatile player riding a hot streak?
-5. Is there a FATIGUE or REST factor worth noting?
-
-Return ONLY this JSON, no markdown, no explanation outside the JSON:
-{{
-  "plays": [
-    {{
-      "confidence_adjustment": <integer -20 to +20>,
-      "flag": <"green"|"yellow"|"red">,
-      "rationale": "<one sentence, max 25 words, be SPECIFIC — name the actual reason>",
-      "trap_detected": <true|false>,
-      "key_risk": "<the single biggest risk to this play in 5 words or less>"
-    }}
-  ]
-}}
-
-Plays:
-{plays_text}"""
+        prompt = (
+            "Evaluate these NBA player prop plays. Apply your NBA expertise to each one.\n"
+            + game7_block + "\n"
+            "For each play, think about:\n"
+            "1. Is the line a TRAP? (set to attract bets despite poor value)\n"
+            "2. Is there a GAME SCRIPT concern? (blowout risk, low total, heavy favorite)\n"
+            "3. Is there a MATCHUP EDGE? (weak defender, high-pace opponent, or elite lock-down defender)\n"
+            "4. Is the CONSISTENCY reliable or is this a volatile player riding a hot streak?\n"
+            "5. Is there a FATIGUE or REST factor worth noting?\n\n"
+            'Return ONLY this JSON, no markdown, no explanation outside the JSON:\n'
+            '{\n  "plays": [\n    {\n'
+            '      "confidence_adjustment": <integer -20 to +20>,\n'
+            '      "flag": <"green"|"yellow"|"red">,\n'
+            '      "rationale": "<one sentence, max 25 words, be SPECIFIC — name the actual reason>",\n'
+            '      "trap_detected": <true|false>,\n'
+            '      "key_risk": "<the single biggest risk to this play in 5 words or less>"\n'
+            '    }\n  ]\n}\n\n'
+            "Plays:\n" + plays_text
+        )
 
         try:
             if use_openrouter:
@@ -120,9 +131,20 @@ Plays:
             else:
                 raw = _call_anthropic(prompt, api_key, effective_model)
 
-            parsed = json.loads(raw)
+            clean = raw.strip()
+            if clean.startswith("```"):
+                clean = clean.split("```", 2)[1]
+                if clean.startswith("json"):
+                    clean = clean[4:]
+                clean = clean.rsplit("```", 1)[0].strip()
+            parsed = json.loads(clean)
             ai_plays = parsed.get("plays", [])
-        except (json.JSONDecodeError, Exception):
+        except json.JSONDecodeError as e:
+            print(f"\n[AI ERROR] Response was not valid JSON: {e}", file=sys.stderr)
+            print(f"[AI RAW RESPONSE] {raw[:500] if 'raw' in dir() else 'no response received'}", file=sys.stderr)
+            ai_plays = []
+        except Exception as e:
+            print(f"\n[AI ERROR] {type(e).__name__}: {e}", file=sys.stderr)
             ai_plays = []
 
         for i, play in enumerate(batch):

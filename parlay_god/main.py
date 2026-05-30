@@ -224,8 +224,9 @@ def _run_manual(plays, cfg, nba_client, bdk_client, use_ai, anthropic_key):
                 scored_plays = evaluate_plays(
                     scored_plays,
                     api_key=anthropic_key,
-                    model=ai_cfg.get("model", "anthropic/claude-haiku-4-5"),
+                    model=model or ai_cfg.get("model", "anthropic/claude-haiku-4-5"),
                     batch_size=ai_cfg.get("max_plays_per_call", 15),
+                    game7_context=game7_context,
                 )
             except Exception as e:
                 console.print(f"[yellow]AI layer skipped ({e}).[/yellow]")
@@ -240,12 +241,7 @@ def _run_manual(plays, cfg, nba_client, bdk_client, use_ai, anthropic_key):
 
 @click.command()
 @click.option("--history", is_flag=True, help="Show past recommendations")
-@click.option("--log-result", type=int, metavar="ID", help="Log the outcome of recommendation ID")
-@click.option(
-    "--outcome",
-    type=click.Choice(["win", "loss", "push", "void"]),
-    help="Outcome to record (use with --log-result)"
-)
+@click.option("--log-result", type=str, metavar="ID[,ID...]", help="Log the outcome of one or more recommendation IDs (comma-separated)")
 @click.option("--mode", default="all", type=click.Choice(["all", "props"]), help="Analysis mode")
 @click.option("--manual", is_flag=True, help="Enter plays manually from any book (free — no Odds API used)")
 @click.option("--ai", "use_ai", is_flag=True, help="Run AI analysis on manual plays (costs OpenRouter tokens)")
@@ -253,18 +249,67 @@ def _run_manual(plays, cfg, nba_client, bdk_client, use_ai, anthropic_key):
 @click.option("--parlays", "show_parlays", is_flag=True, help="Show saved parlay history instead of individual plays")
 @click.option("--parlay-type", default=None, type=click.Choice(["SGP","multi"]), help="Filter parlays by type")
 @click.option("--legs", default=None, type=int, help="Filter parlays by number of legs")
-@click.option("--log-parlay", type=int, metavar="ID", help="Log the outcome of a saved parlay")
+@click.option("--log-parlay", type=str, metavar="ID[,ID...]", help="Log the outcome of one or more saved parlays (comma-separated)")
 @click.option("--place-parlay", "place_parlay_id", type=int, metavar="ID", help="Mark a parlay as placed (bet before the game)")
 @click.option("--player", default=None, help="Filter history by player name (partial match)")
 @click.option("--stat", default=None, type=click.Choice(["points","rebounds","assists","threes","steals","pra","ar"]), help="Filter history by stat type")
 @click.option("--direction", default=None, type=click.Choice(["over","under"]), help="Filter history by over or under")
 @click.option("--outcome", default=None, type=click.Choice(["win","loss","push","void","pending"]), help="Filter history by outcome (pending = not yet recorded)")
 @click.option("--date", "run_date", default=None, help="Filter history by date (YYYY-MM-DD)")
+@click.option("--test-ai", "test_ai", is_flag=True, help="Send a test play through the AI layer to verify it's working")
+@click.option("--model", default=None, help="Override the AI model for this run (e.g. deepseek/deepseek-chat)")
+@click.option("--game7", "is_game7", is_flag=True, help="Load Game 7 series intelligence into the AI layer for deeper analysis")
 def main(history, log_result, outcome, mode, manual, use_ai, secondary,
          player, stat, direction, run_date,
-         show_parlays, parlay_type, legs, log_parlay, place_parlay_id):
+         show_parlays, parlay_type, legs, log_parlay, place_parlay_id, test_ai, model, is_game7):
     load_env()
     init_db()
+
+    game7_context = None
+    if is_game7:
+        game7_path = os.path.join(os.path.dirname(__file__), "..", "knowledge_base", "game7_context.md")
+        game7_path = os.path.normpath(game7_path)
+        if os.path.exists(game7_path):
+            with open(game7_path) as f:
+                game7_context = f.read()
+            console.print("[cyan]Game 7 mode active — series intelligence loaded into AI layer.[/cyan]")
+        else:
+            console.print("[yellow]--game7 flag set but knowledge_base/game7_context.md not found. Running without it.[/yellow]")
+
+    if test_ai:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            console.print("[red]ANTHROPIC_API_KEY not found in .env[/red]")
+            sys.exit(1)
+        cfg = load_config()
+        effective_model = model or cfg.get("ai", {}).get("model", "anthropic/claude-sonnet-4-5")
+        console.print(f"[cyan]Testing AI layer...[/cyan]")
+        console.print(f"[dim]Key type: {'OpenRouter' if api_key.startswith('sk-or-v1-') else 'Anthropic direct'}[/dim]")
+        console.print(f"[dim]Model: {effective_model}[/dim]")
+        dummy_play = [{
+            "player": "LeBron James", "stat_type": "points", "line": 24.5,
+            "book": "draftkings", "over_odds": -110, "rule_score": 62.0,
+            "away_team": "LAL", "home_team": "GSW",
+            "splits": {
+                "hit_rate_l5": 0.80, "hits_l5": 4, "hit_rate_l10": 0.70, "hits_l10": 7,
+                "avg_l5": 27.2, "avg_l10": 26.1, "last_3_avg": 28.0,
+                "min_l10": 18, "max_l10": 38, "trend": 0.04, "line_value": 0.07,
+                "std_dev": 5.2, "coefficient_of_variation": 0.20, "blowout_games": 1,
+                "games_available": 10, "small_sample": False,
+            }
+        }]
+        result = evaluate_plays(dummy_play, api_key=api_key, model=effective_model)
+        play = result[0]
+        if play.get("ai_rationale") == "Insufficient AI data.":
+            console.print("[red]AI layer FAILED — check the error above for the reason.[/red]")
+        else:
+            console.print(f"\n[green]AI layer is working.[/green]")
+            console.print(f"  Flag:       {play.get('ai_flag')}")
+            console.print(f"  Adjustment: {play.get('ai_adjustment'):+d}")
+            console.print(f"  Rationale:  {play.get('ai_rationale')}")
+            console.print(f"  Key risk:   {play.get('key_risk')}")
+            console.print(f"  Trap:       {play.get('trap_detected')}")
+        return
 
     if history:
         rows = get_history(
@@ -283,11 +328,13 @@ def main(history, log_result, outcome, mode, manual, use_ai, secondary,
         if not outcome:
             console.print("[red]Provide --outcome (win, loss, push, void) with --log-result.[/red]")
             sys.exit(1)
-        try:
-            log_outcome(log_result, outcome)
-            console.print(f"[green]Outcome recorded:[/green] Play #{log_result} → {outcome}")
-        except Exception as e:
-            console.print(f"[red]Error:[/red] {e}")
+        ids = [s.strip() for s in log_result.split(",")]
+        for raw_id in ids:
+            try:
+                log_outcome(int(raw_id), outcome)
+                console.print(f"[green]Outcome recorded:[/green] Play #{raw_id} → {outcome}")
+            except Exception as e:
+                console.print(f"[red]Error on #{raw_id}:[/red] {e}")
         return
 
     if place_parlay_id:
@@ -304,11 +351,13 @@ def main(history, log_result, outcome, mode, manual, use_ai, secondary,
         if not outcome:
             console.print("[red]Provide --outcome (win, loss, push, void) with --log-parlay.[/red]")
             sys.exit(1)
-        try:
-            log_parlay_outcome(log_parlay, outcome)
-            console.print(f"[green]Outcome recorded:[/green] Parlay #{log_parlay} → {outcome}")
-        except Exception as e:
-            console.print(f"[red]Error:[/red] {e}")
+        ids = [s.strip() for s in log_parlay.split(",")]
+        for raw_id in ids:
+            try:
+                log_parlay_outcome(int(raw_id), outcome)
+                console.print(f"[green]Outcome recorded:[/green] Parlay #{raw_id} → {outcome}")
+            except Exception as e:
+                console.print(f"[red]Error on #{raw_id}:[/red] {e}")
         return
 
     if show_parlays:
@@ -402,8 +451,9 @@ def main(history, log_result, outcome, mode, manual, use_ai, secondary,
                 primary_plays = evaluate_plays(
                     primary_plays,
                     api_key=os.getenv("ANTHROPIC_API_KEY"),
-                    model=ai_cfg.get("model", "claude-haiku-4-5-20251001"),
+                    model=model or ai_cfg.get("model", "claude-haiku-4-5-20251001"),
                     batch_size=ai_cfg.get("max_plays_per_call", 15),
+                    game7_context=game7_context,
                 )
             except Exception as e:
                 console.print(f"\n[yellow]AI layer skipped ({e}). Showing rule scores.[/yellow]\n")

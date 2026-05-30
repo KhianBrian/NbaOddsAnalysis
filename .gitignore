@@ -2,7 +2,7 @@
 .env
 
 # Database — contains personal betting data
-parlaygod.db
+*.db
 
 # Python
 venv/
